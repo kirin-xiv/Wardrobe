@@ -74,6 +74,7 @@ public class FavoriteService
             Id = Guid.NewGuid(),
             Name = "Favorites",
             FolderPaths = new List<string>(),
+            Tags = new List<string>(),
             Order = int.MaxValue // always last
         };
         configuration.Collections.Add(fav);

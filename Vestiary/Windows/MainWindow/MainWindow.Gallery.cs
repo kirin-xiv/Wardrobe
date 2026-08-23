@@ -8,6 +8,10 @@ namespace Vestiary.Windows;
 
 public partial class MainWindow
 {
+    private List<Guid> _cachedSortOrder = new();
+    private HashSet<Guid> _cachedSortKeys = new();
+    private DesignSortMode _cachedSortMode = (DesignSortMode)(-1);
+
     private void DrawGalleryContent()
     {
         if (!IsGlobalSearchActive && selectedCollectionId == Guid.Empty)
@@ -24,7 +28,7 @@ public partial class MainWindow
         var visibleFiltered = FilterBySearch(visibleDesigns);
         var hiddenFiltered = FilterBySearch(hiddenDesigns);
         var designsToShow = hiddenDesignService.ShowHidden ? hiddenFiltered : visibleFiltered;
-        var sortedDesigns = SortDesignsForDisplay(designsToShow);
+        var sortedDesigns = GetOrUpdateSortedDesigns(designsToShow);
 
         ImGui.Spacing();
 
@@ -85,6 +89,45 @@ public partial class MainWindow
         plugin.Configuration.LastAppliedAt.TryGetValue(designId, out var appliedAt)
             ? appliedAt
             : DateTime.MinValue;
+
+    /// <summary>
+    /// Returns the sorted design list, recomputing the order only when the sort
+    /// inputs actually change (sort mode or the set of visible designs). This
+    /// keeps the gallery stable when a design is applied mid-view — so a card
+    /// doesn't suddenly jump to the front — and refreshes the order on the next
+    /// navigation.
+    /// </summary>
+    private List<KeyValuePair<Guid, (string DisplayName, string FullPath, uint DisplayColor, bool ShownInQdb)>> GetOrUpdateSortedDesigns(
+        Dictionary<Guid, (string DisplayName, string FullPath, uint DisplayColor, bool ShownInQdb)> designs)
+    {
+        var mode = plugin.Configuration.DesignSortMode;
+
+        // Default mode is free and should always reflect Glamourer's live order.
+        if (mode == DesignSortMode.Default)
+            return designs.ToList();
+
+        bool keysChanged = designs.Count != _cachedSortKeys.Count
+            || !_cachedSortKeys.SetEquals(designs.Keys);
+        bool sortChanged = mode != _cachedSortMode;
+
+        if (keysChanged || sortChanged)
+        {
+            _cachedSortMode = mode;
+            _cachedSortKeys = new HashSet<Guid>(designs.Keys);
+            _cachedSortOrder = SortDesignsForDisplay(designs).Select(kv => kv.Key).ToList();
+        }
+
+        // Rebuild the list from the cached order, but use fresh design values
+        // (names/paths/colors may have changed without changing the key set).
+        var result = new List<KeyValuePair<Guid, (string DisplayName, string FullPath, uint DisplayColor, bool ShownInQdb)>>(designs.Count);
+        foreach (var designId in _cachedSortOrder)
+        {
+            if (designs.TryGetValue(designId, out var value))
+                result.Add(new KeyValuePair<Guid, (string DisplayName, string FullPath, uint DisplayColor, bool ShownInQdb)>(designId, value));
+        }
+
+        return result;
+    }
 
     private void DrawEmptyCollectionsState()
     {

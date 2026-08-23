@@ -24,6 +24,13 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
 
+    /// <summary>
+    /// Cross-platform plugin config directory, resolved by Dalamud. On Windows this is
+    /// %APPDATA%\XIVLauncher\pluginConfigs\Vestiary; on Linux (XL core) it is
+    /// ~/.xlcore/pluginConfigs/Vestiary. Use this instead of hardcoding the path.
+    /// </summary>
+    internal static string PluginConfigDirectory => PluginInterface.GetPluginConfigDirectory();
+
     private const string CommandName = "/vestiary";
     private const string ShortCommandName = "/vs";
     private const string GuideCommandName = "/vsguide";
@@ -72,10 +79,7 @@ public sealed class Plugin : IDalamudPlugin
         DesignMetadataService = new DesignMetadataService(Configuration, GlamourerService);
         HiddenDesignService = new HiddenDesignService(Configuration);
         PenumbraService = new PenumbraService(PluginInterface, Log, DataManager);
-        var configDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "XIVLauncher", "pluginConfigs", "Vestiary");
-        ModStateService = new ModStateService(Configuration, PenumbraService, GlamourerService, configDir);
+        ModStateService = new ModStateService(Configuration, PenumbraService, GlamourerService, PluginConfigDirectory);
         EmoteService = new EmoteService(Configuration, PenumbraService);
         FavoriteService = new FavoriteService(Configuration, CollectionService);
         UtilityService = new UtilityService(pluginDir, Log, Configuration, ModStateService);
@@ -105,12 +109,13 @@ public sealed class Plugin : IDalamudPlugin
         var starFilledPath = Path.Combine(pluginDir, "star_filled.png");
         var searchIconPath = Path.Combine(pluginDir, "search_icon.png");
         var sortIconPath = Path.Combine(pluginDir, "sort_icon.png");
+        var reloadIconPath = Path.Combine(pluginDir, "reload.png");
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this, UtilityService, goatImagePath, CollectionService,
             DesignMetadataService, HiddenDesignService, FavoriteService, noPreviewImagePath,
             cameraIconPath, uploadIconPath, clipboardIconPath, viewIconPath, hiddenIconPath,
-            starEmptyPath, starFilledPath, searchIconPath, sortIconPath, saveModsIconPath);
+            starEmptyPath, starFilledPath, searchIconPath, sortIconPath, reloadIconPath, saveModsIconPath);
         CollectionEditorWindow = new CollectionEditorWindow(this, CollectionService);
         DesignEditorWindow = new DesignEditorWindow(this, UtilityService, DesignMetadataService, GlamourerService);
         CameraWindow = new CameraWindow(this, UtilityService);

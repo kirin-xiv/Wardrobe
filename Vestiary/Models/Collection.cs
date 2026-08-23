@@ -9,17 +9,19 @@ public class Collection
     public Guid Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public List<string> FolderPaths { get; set; } = new();
+    public List<string> Tags { get; set; } = new();
     public int Order { get; set; }
 
     public Collection()
     {
     }
 
-    public Collection(string name, List<string> folderPaths, int order = 0)
+    public Collection(string name, List<string> folderPaths, int order = 0, List<string>? tags = null)
     {
         Id = Guid.NewGuid();
         Name = name;
         FolderPaths = folderPaths ?? new();
+        Tags = tags ?? new();
         Order = order;
     }
 }

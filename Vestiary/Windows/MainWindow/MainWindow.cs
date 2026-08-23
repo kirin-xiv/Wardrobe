@@ -22,6 +22,7 @@ public partial class MainWindow : Window, IDisposable
     private readonly string starFilledPath;
     private readonly string searchIconPath;
     private readonly string sortIconPath;
+    private readonly string reloadIconPath;
     private readonly Plugin plugin;
     private readonly UtilityService utility;
     private readonly CollectionService collectionService;
@@ -67,6 +68,7 @@ public partial class MainWindow : Window, IDisposable
         string starFilledPath,
         string searchIconPath,
         string sortIconPath,
+        string reloadIconPath,
         string saveModsIconPath
     )
         : base("Vestiary##With a hidden ID", ImGuiWindowFlags.None)
@@ -88,6 +90,7 @@ public partial class MainWindow : Window, IDisposable
         this.starFilledPath = starFilledPath;
         this.searchIconPath = searchIconPath;
         this.sortIconPath = sortIconPath;
+        this.reloadIconPath = reloadIconPath;
         this.saveModsIconPath = saveModsIconPath;
         this.plugin = plugin;
         this.utility = utility;

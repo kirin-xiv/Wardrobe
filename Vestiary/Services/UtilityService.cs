@@ -28,9 +28,7 @@ public class UtilityService
     {
         get
         {
-            var configsRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "XIVLauncher", "pluginConfigs");
+            var configsRoot = Path.GetDirectoryName(Plugin.PluginConfigDirectory) ?? string.Empty;
             return File.Exists(Path.Combine(configsRoot, "Wardrobe.json"))
                 || File.Exists(Path.Combine(configsRoot, "Wardrobe", "Wardrobe.json"));
         }
@@ -74,10 +72,7 @@ public class UtilityService
         this.log = log;
         this.modStateService = modStateService;
 
-        var configDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "XIVLauncher", "pluginConfigs",
-            "Vestiary");
+        var configDir = Plugin.PluginConfigDirectory;
         ThumbnailsDirectory = Path.Combine(configDir, "thumbnails");
         Directory.CreateDirectory(ThumbnailsDirectory);
         log.Information($"Thumbnails directory: {ThumbnailsDirectory}");
@@ -362,9 +357,7 @@ public class UtilityService
     {
         try
         {
-            var configsRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "XIVLauncher", "pluginConfigs");
+            var configsRoot = Path.GetDirectoryName(Plugin.PluginConfigDirectory) ?? string.Empty;
 
             var oldConfigPath = Path.Combine(configsRoot, "Wardrobe.json");
             if (!File.Exists(oldConfigPath))

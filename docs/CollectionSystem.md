@@ -4,7 +4,7 @@
 
 ## TL;DR
 
-✅ **v0.0 MVP COMPLETE**: Collections feature fully implemented. Users can organize Glamourer designs by user-defined categories. Collections map to Glamourer folder paths, data persists in Configuration, and UI tabs switch between collections. Supports uncategorized designs (no folder) and multiple folder paths per collection.
+✅ **v0.0 MVP COMPLETE**: Collections feature fully implemented. Users can organize Glamourer designs by user-defined categories. Collections map to Glamourer folder paths and/or Glamourer tags, data persists in Configuration, and UI tabs switch between collections. Supports uncategorized designs (no folder), multiple folder paths per collection, and comma-separated tag matching.
 
 ---
 
@@ -75,7 +75,7 @@
 - Collections stored in plugin Configuration (simple, lightweight, no separate DB)
 - Folder paths matched as string prefixes (e.g., "SFW/Dresses" matches designs in that folder)
 - Collections are soft-linked to Glamourer folders — no modification to Glamourer needed
-- MVP only filters by folder path; tags/search deferred to future
+- Collections filter by folder path and/or Glamourer tags (union match)
 - Default collection "All Designs" always available (optional, can be skipped for now)
 
 ## Implementation Status
@@ -139,7 +139,7 @@
 - Input for collection name
 - Multi-line text input for folder paths (one per line)
 - **Status: ✅ COMPLETED**
-- Implementation: CollectionEditorWindow.cs created with text-based UI. Users enter collection name and folder paths as newline-separated list. Window uses 550x400 size with live design count feedback.
+- Implementation: CollectionEditorWindow.cs created with text-based UI. Users enter collection name, folder paths as a newline-separated list, and tags as a comma-separated list. Window uses 550x500 size with live design count feedback.
 
 ### TASK 7: Filter Gallery by Collection (depends on Task 5)
 **Objective**: Show only designs in selected collection  
@@ -173,7 +173,7 @@
    - Users enter paths as newline-separated text in CollectionEditorWindow
 
 3. **Uncategorized support**: **IMPLEMENTED**
-   - Collections with empty folder paths show only root-level designs (designs without any "/" in FullPath)
+   - Collections with empty folder paths and empty tags show only root-level designs (designs without any "/" in FullPath)
    - Example: "Spring Shirt - Caroline Towel" appears in uncategorized
    - Example: "SFW/Dresses/AM - Jaque Bridesmaid" does NOT appear in uncategorized
 

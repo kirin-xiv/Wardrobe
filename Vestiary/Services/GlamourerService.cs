@@ -24,6 +24,17 @@ public class GlamourerService
     private static readonly TimeSpan DesignListCacheTtl = TimeSpan.FromSeconds(2);
 
     private readonly Dictionary<Guid, DateTime> designDateCache = new();
+    private readonly Dictionary<Guid, List<string>> designTagsCache = new();
+
+    // Tag cache refreshes are queued and processed in small per-frame batches
+    // so the UI never blocks on hundreds of GetDesignJObject IPC calls at once.
+    // Refresh cycles are started on demand (button click, editor open, or design
+    // list changes) rather than by polling.
+    private readonly Queue<Guid> tagRefreshQueue = new();
+    private bool tagRefreshInProgress;
+    private DateTime lastTagRefreshProcess = DateTime.MinValue;
+    private static readonly TimeSpan TagRefreshProcessThrottle = TimeSpan.FromMilliseconds(16);
+    private const int MaxTagRefreshesPerProcess = 40;
 
     public GlamourerService(IDalamudPluginInterface pluginInterface, IPluginLog pluginLog, Configuration configuration)
     {
@@ -60,10 +71,35 @@ public class GlamourerService
         cachedDesignList = designListSubscriber.InvokeFunc();
         cacheExpiry = DateTime.UtcNow + DesignListCacheTtl;
 
-        // Designs were added or removed: drop cached dates so newly-created
-        // designs get fresh timestamps and deleted ones don't linger in memory.
-        if (previous != null && !KeysMatch(previous, cachedDesignList))
+        if (cachedDesignList == null)
+        {
+            // Glamourer unavailable: drop cached data so we don't serve stale results.
             designDateCache.Clear();
+            designTagsCache.Clear();
+            tagRefreshQueue.Clear();
+            tagRefreshInProgress = false;
+            return cachedDesignList;
+        }
+
+        // Designs were added or removed: drop cached dates so newly-created designs
+        // get fresh timestamps, and refresh the tag cache (pruning deleted designs
+        // while keeping existing tags visible so the gallery doesn't blink).
+        bool keysChanged = previous != null && !KeysMatch(previous, cachedDesignList);
+        if (keysChanged)
+        {
+            designDateCache.Clear();
+            RequestTagRefresh(clearCache: true);
+        }
+        else if (previous == null)
+        {
+            // The cache was invalidated without a prior snapshot (e.g., after applying
+            // a design). Keys are expected to be unchanged, but drop tag entries for
+            // designs that no longer exist so they can't linger in memory.
+            foreach (var stale in designTagsCache.Keys
+                         .Where(k => !cachedDesignList.ContainsKey(k))
+                         .ToList())
+                designTagsCache.Remove(stale);
+        }
 
         return cachedDesignList;
     }
@@ -85,11 +121,65 @@ public class GlamourerService
     /// <summary>
     /// Force the next GetDesignList call to fetch fresh data from Glamourer.
     /// </summary>
-    private void InvalidateDesignListCache()
+    /// <param name="clearTags">
+    /// When true (design deleted) the tag cache is dropped too, since a design
+    /// may be gone. Applying a design passes false — applying changes the player's
+    /// glamour, not design metadata — so cached tags stay valid and a visible
+    /// tag-based collection doesn't blink and rebuild on every apply.
+    /// </param>
+    private void InvalidateDesignListCache(bool clearTags = true)
     {
         cachedDesignList = null;
         cacheExpiry = DateTime.MinValue;
         designDateCache.Clear();
+
+        if (!clearTags)
+            return;
+
+        designTagsCache.Clear();
+        tagRefreshQueue.Clear();
+        tagRefreshInProgress = false;
+        lastTagRefreshProcess = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// Queue designs for an incremental tag reload. Called by the manual refresh
+    /// button, when opening the collection editor, and whenever the design list
+    /// changes structurally.
+    /// - <paramref name="clearCache"/> = true (design list changed): drop tags for
+    ///   designs that no longer exist and queue only newly-added designs. Existing
+    ///   cached tags stay visible so a visible collection doesn't blink.
+    /// - <paramref name="clearCache"/> = false (manual refresh): queue every design
+    ///   for background revalidation; stale tags stay visible until each design is
+    ///   re-read.
+    /// </summary>
+    public void RequestTagRefresh(bool clearCache = false)
+    {
+        tagRefreshQueue.Clear();
+
+        if (cachedDesignList != null)
+        {
+            if (clearCache)
+            {
+                // Drop tags for designs that no longer exist, but keep the rest
+                // so the visible collection doesn't lose all its tag matches.
+                foreach (var stale in designTagsCache.Keys
+                             .Where(k => !cachedDesignList.ContainsKey(k))
+                             .ToList())
+                    designTagsCache.Remove(stale);
+            }
+
+            // clearCache=false: revalidate every design in the background.
+            // clearCache=true:  only load the newly-added designs.
+            foreach (var key in cachedDesignList.Keys)
+            {
+                if (!clearCache || !designTagsCache.ContainsKey(key))
+                    tagRefreshQueue.Enqueue(key);
+            }
+        }
+
+        tagRefreshInProgress = tagRefreshQueue.Count > 0;
+        lastTagRefreshProcess = DateTime.MinValue;
     }
 
     public string? GetDesignBase64(Guid designId)
@@ -111,6 +201,84 @@ public class GlamourerService
             log.Error($"[ModSnapshot] GetDesignJObject failed for {designId}: {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Get the Glamourer tags for a design. Tags are read from the design's
+    /// JObject and cached. The cache is rebuilt incrementally by ProcessTagRefresh()
+    /// and refreshed on demand via RequestTagRefresh().
+    /// </summary>
+    public IReadOnlyList<string> GetDesignTags(Guid designId)
+    {
+        if (designTagsCache.TryGetValue(designId, out var cached))
+            return cached;
+
+        // While a background revalidation is warming or rebuilding the cache,
+        // avoid a synchronous IPC call for every not-yet-refreshed design in a
+        // single frame. Those entries get populated by ProcessTagRefresh() shortly.
+        if (tagRefreshInProgress)
+            return Array.Empty<string>();
+
+        var tags = ReadTagsFromDesign(designId);
+        designTagsCache[designId] = tags;
+        return tags;
+    }
+
+    /// <summary>
+    /// Called every frame while a tag-based collection is visible. Drains the
+    /// refresh queue in small batches. It does not poll periodically; new
+    /// refresh cycles are requested explicitly via <see cref="RequestTagRefresh"/>.
+    /// </summary>
+    public void ProcessTagRefresh()
+    {
+        if (!tagRefreshInProgress)
+        {
+            // Cold start or partial cache: queue any designs we have not read yet.
+            if (cachedDesignList != null)
+            {
+                foreach (var key in cachedDesignList.Keys)
+                {
+                    if (!designTagsCache.ContainsKey(key))
+                        tagRefreshQueue.Enqueue(key);
+                }
+                tagRefreshInProgress = tagRefreshQueue.Count > 0;
+            }
+        }
+
+        if (!tagRefreshInProgress)
+            return;
+
+        var now = DateTime.UtcNow;
+
+        // At most one batch per frame, no matter how many UI callers invoke this.
+        if (now - lastTagRefreshProcess < TagRefreshProcessThrottle)
+            return;
+
+        lastTagRefreshProcess = now;
+        int processed = 0;
+        while (processed < MaxTagRefreshesPerProcess && tagRefreshQueue.TryDequeue(out var designId))
+        {
+            if (cachedDesignList != null && cachedDesignList.ContainsKey(designId))
+                designTagsCache[designId] = ReadTagsFromDesign(designId);
+            processed++;
+        }
+
+        if (tagRefreshQueue.Count == 0)
+            tagRefreshInProgress = false;
+    }
+
+    private List<string> ReadTagsFromDesign(Guid designId)
+    {
+        var design = GetDesignJObject(designId);
+        if (design?["Tags"] is not JArray tagsArray)
+            return new List<string>();
+
+        return tagsArray
+            .Where(t => t.Type == JTokenType.String)
+            .Select(t => t.Value<string>())
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t!.Trim())
+            .ToList();
     }
 
     /// <summary>
@@ -231,7 +399,7 @@ public class GlamourerService
             
             // Apply to player (object index 0), key=0 (no locking)
             int result = applyDesignSubscriber.InvokeFunc(designId, 0, 0, designFlags);
-            InvalidateDesignListCache();
+            InvalidateDesignListCache(clearTags: false);
             
             if (result == 0)
             {

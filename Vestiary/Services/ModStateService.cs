@@ -219,8 +219,8 @@ public class ModStateService
 
             // One-time extraction from old Vestiary.json (users upgrading from before split)
             var configPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "XIVLauncher", "pluginConfigs", "Vestiary.json");
+                Path.GetDirectoryName(Plugin.PluginConfigDirectory) ?? string.Empty,
+                "Vestiary.json");
 
             if (File.Exists(configPath))
             {

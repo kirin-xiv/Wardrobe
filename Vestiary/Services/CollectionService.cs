@@ -27,9 +27,9 @@ public class CollectionService
     /// <summary>
     /// Create a new collection.
     /// </summary>
-    public Collection CreateCollection(string name, List<string> folderPaths)
+    public Collection CreateCollection(string name, List<string> folderPaths, List<string>? tags = null)
     {
-        var collection = new Collection(name, folderPaths, configuration.Collections.Count);
+        var collection = new Collection(name, folderPaths, configuration.Collections.Count, tags);
         configuration.Collections.Add(collection);
         configuration.Save();
         return collection;
@@ -38,7 +38,7 @@ public class CollectionService
     /// <summary>
     /// Update an existing collection.
     /// </summary>
-    public bool UpdateCollection(Guid id, string name, List<string> folderPaths)
+    public bool UpdateCollection(Guid id, string name, List<string> folderPaths, List<string>? tags = null)
     {
         var collection = configuration.Collections.FirstOrDefault(c => c.Id == id);
         if (collection == null)
@@ -46,6 +46,7 @@ public class CollectionService
 
         collection.Name = name;
         collection.FolderPaths = folderPaths ?? new();
+        collection.Tags = tags ?? new();
         configuration.Save();
         return true;
     }
@@ -91,24 +92,64 @@ public class CollectionService
         if (collection == null)
             return new();
 
+        return GetDesignsByCriteria(collection.FolderPaths, collection.Tags);
+    }
+
+    /// <summary>
+    /// Get all designs that match the supplied folder paths and/or tags.
+    /// Matching is a union: a design is included when it matches any folder path
+    /// OR carries any of the requested tags. If neither criteria is supplied,
+    /// returns uncategorized designs (root-level, no "/" in their path).
+    /// </summary>
+    public Dictionary<Guid, (string DisplayName, string FullPath, uint DisplayColor, bool ShownInQdb)> GetDesignsByCriteria(
+        List<string>? folderPaths,
+        List<string>? tags)
+    {
+        var folders = Normalize(folderPaths);
+        var tagList = Normalize(tags);
+
         var allDesigns = glamourerService.GetDesignList();
 
-        // If collection has no paths, return designs with no folder (root-level designs)
-        if (collection.FolderPaths == null || collection.FolderPaths.Count == 0)
+        bool hasFolders = folders.Count > 0;
+        bool hasTags = tagList.Count > 0;
+
+        // Drain any pending tag refresh work while a tag-based collection is visible.
+        if (hasTags)
+            glamourerService.ProcessTagRefresh();
+
+        // If collection has no paths and no tags, return designs with no folder (root-level designs)
+        if (!hasFolders && !hasTags)
         {
-            var filtered = allDesigns
+            return allDesigns
                 .Where(kvp => !kvp.Value.FullPath.Contains("/"))
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-            return filtered;
         }
 
-        // Otherwise, return designs that match any path in this collection
-        var result = allDesigns
-            .Where(kvp => collection.FolderPaths.Any(path => 
-                kvp.Value.FullPath.StartsWith(path, StringComparison.OrdinalIgnoreCase)))
-            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        var tagSet = new HashSet<string>(tagList, StringComparer.OrdinalIgnoreCase);
 
-        return result;
+        return allDesigns
+            .Where(kvp =>
+            {
+                bool folderMatch = hasFolders && folders.Any(path =>
+                    kvp.Value.FullPath.StartsWith(path, StringComparison.OrdinalIgnoreCase));
+
+                bool tagMatch = hasTags && glamourerService.GetDesignTags(kvp.Key)
+                    .Any(designTag => tagSet.Contains(designTag));
+
+                return folderMatch || tagMatch;
+            })
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
     }
+
+    /// <summary>
+    /// Convenience wrapper for the collection editor's live preview.
+    /// </summary>
+    public int CountDesignsByCriteria(List<string>? folderPaths, List<string>? tags) =>
+        GetDesignsByCriteria(folderPaths, tags).Count;
+
+    private static List<string> Normalize(List<string>? values) =>
+        (values ?? new List<string>())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Select(v => v.Trim())
+            .ToList();
 }

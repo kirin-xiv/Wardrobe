@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Vestiary.Models;
@@ -31,6 +32,9 @@ public partial class MainWindow
         float sortBtnX = searchX - sortBtnSize - 8f;
         float sortBtnY = searchY;
 
+        const float refreshBtnSize = 35f;
+        float refreshBtnX = sortBtnX - refreshBtnSize - 8f;
+
         // "Browse" title — same size as rail menu text, centered on the search box.
         var browseSize = ImGui.CalcTextSize(Strings.BrowseHeading);
         ImGui.SetCursorScreenPos(new Vector2(start.X + 8f, start.Y + topPad + searchInputH / 2f - browseSize.Y / 2f));
@@ -40,6 +44,40 @@ public partial class MainWindow
 
         if (_currentView == 0)
         {
+            // Refresh tags button — only shown when the selected collection uses tags.
+            if (SelectedCollectionHasTags())
+            {
+                var refreshBtnMin = new Vector2(refreshBtnX, sortBtnY);
+                var refreshBtnMax = refreshBtnMin + new Vector2(refreshBtnSize, refreshBtnSize);
+                bool refreshHovered = ImGui.IsMouseHoveringRect(refreshBtnMin, refreshBtnMax);
+
+                dl.AddRectFilled(refreshBtnMin, refreshBtnMax,
+                    ImGui.GetColorU32(refreshHovered ? ThemeManager.Current.ChipBgHovered : ThemeManager.Current.ChipBg), 4f);
+                dl.AddRect(refreshBtnMin, refreshBtnMax,
+                    ImGui.GetColorU32(ThemeManager.Current.ChipBorder), 4f, 0, 1f);
+
+                var reloadTex = plugin.TextureCache.GetOrLoadTexture(reloadIconPath)?.GetWrapOrDefault();
+                if (reloadTex != null)
+                {
+                    const float reloadIconS = 22f;
+                    var reloadIconMin = refreshBtnMin + new Vector2((refreshBtnSize - reloadIconS) / 2f);
+                    var reloadIconMax = reloadIconMin + new Vector2(reloadIconS, reloadIconS);
+                    dl.AddImage(reloadTex.Handle, reloadIconMin, reloadIconMax, Vector2.Zero, Vector2.One,
+                        ImGui.GetColorU32(refreshHovered ? ThemeManager.Current.IconHovered : ThemeManager.Current.IconDefault));
+                }
+
+                ImGui.SetCursorScreenPos(refreshBtnMin);
+                ImGui.InvisibleButton("##refresh_tags_button", new Vector2(refreshBtnSize, refreshBtnSize));
+                if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
+                    plugin.GlamourerService.RequestTagRefresh();
+
+                if (refreshHovered)
+                {
+                    ImGui.SetTooltip(Strings.TooltipRefreshTags);
+                    ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                }
+            }
+
             // Sort button — rounded square with up/down arrows, left of the search box.
             var sortMode = plugin.Configuration.DesignSortMode;
             var sortBtnMin = new Vector2(sortBtnX, sortBtnY);
@@ -145,6 +183,18 @@ public partial class MainWindow
     {
         plugin.Configuration.DesignSortMode = mode;
         plugin.Configuration.Save();
+        _cachedSortMode = (DesignSortMode)(-1); // force the gallery to re-sort
+    }
+
+    private bool SelectedCollectionHasTags()
+    {
+        if (selectedCollectionId == Guid.Empty)
+            return false;
+
+        var collection = collectionService.GetCollections()
+            .FirstOrDefault(c => c.Id == selectedCollectionId);
+
+        return collection?.Tags?.Any(t => !string.IsNullOrWhiteSpace(t)) ?? false;
     }
 
 

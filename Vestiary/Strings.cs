@@ -147,15 +147,21 @@ public static class Strings
     public const string ColFoldersLabel    = "Glamourer Folders:";
     public const string ColFoldersTooltip1 = "These are folder paths from Glamourer's design list.";
     public const string ColFoldersTooltip2 = "Only designs under these folders appear in this collection.";
-    public const string ColFoldersTooltip3 = "Leave empty to include uncategorized designs instead.";
+    public const string ColFoldersTooltip3 = "Leave both folders and tags empty to include uncategorized designs.";
+    public const string ColTagsLabel       = "Tags:";
+    public const string ColTagsHint        = "e.g., summer, casual, SFW Random";
+    public const string ColTagsTooltip1    = "Match designs by their Glamourer tags.";
+    public const string ColTagsTooltip2    = "Separate multiple tags with commas. A design matches";
+    public const string ColTagsTooltip3    = "if it has any of these tags. Folder matches are included too.";
+    public const string TooltipRefreshTags  = "Refresh tags from Glamourer";
     public const string ColErrorEmptyName  = "⚠ Collection name is required";
     public const string ColErrorOk         = "OK";
 
     public static string ColDesignsMatch(int count) =>
-        $"✓ {count} design(s) match these folders";
+        $"✓ {count} design(s) match these filters";
 
     public static string ColUncategorizedHint(int count) =>
-        $"No folders selected — {count} uncategorized design(s) would be included";
+        $"No folders or tags selected — {count} uncategorized design(s) would be included";
 
     // ── Design editor window ────────────────────────
     public const string DesignEditTitle       = "Edit Design Metadata";
