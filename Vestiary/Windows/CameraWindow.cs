@@ -4,9 +4,14 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
 using Vestiary.Services;
+using Vortice.Direct3D11;
+using Vortice.DXGI;
+using Box = Vortice.Mathematics.Box;
+using KernelDevice = FFXIVClientStructs.FFXIV.Client.Graphics.Kernel.Device;
 
 namespace Vestiary.Windows;
 
@@ -226,21 +231,184 @@ public class CameraWindow : Window, IDisposable
         {
             int sx = (int)(framePos.X + Inset), sy = (int)(framePos.Y + Inset);
             int sw = (int)(frameSize.X - Inset * 2), sh = (int)(frameSize.Y - Inset * 2);
-            using var bmp = new Bitmap(sw, sh);
-            using var g = Graphics.FromImage(bmp);
-            g.CopyFromScreen(sx, sy, 0, 0, new Size(sw, sh), CopyPixelOperation.SourceCopy);
+            if (sw <= 0 || sh <= 0)
+                return;
+
+            // Read the game's DX11 swap-chain back buffer directly. Unlike GDI
+            // CopyFromScreen, this works on Linux/Wine + DXVK where the frame is
+            // rendered through Vulkan and the X11 desktop read returns black.
+            if (!TryCaptureRegion(sx, sy, sw, sh, out var pixels, out var width, out var height))
+            {
+                Plugin.Log.Warning("[Camera] capture failed (swap chain unavailable)");
+                return;
+            }
+
             var dir = utility.ThumbnailsDirectory;
             Directory.CreateDirectory(dir);
             var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
             var tempPath = Path.Combine(dir, $"camera_{timestamp}_temp.png");
-            bmp.Save(tempPath, ImageFormat.Png);
             var destBase = Path.Combine(dir, $"camera_{timestamp}");
-            var path = utility.ResizeThumbnail(tempPath, destBase);
-            try { File.Delete(tempPath); } catch { }
-            var cb = onImageCaptured; Close(); cb?.Invoke(path);
+            var finalPath = destBase + ".jpg";
+
+            var cb = onImageCaptured;
+            Close();
+
+            // Encode/resize off the game thread. The GPU readback above must stay
+            // on the render thread, but the PNG/JPEG encoding is the expensive part
+            // that was hitching the frame; do it on a worker thread and marshal the
+            // callback back to the framework thread once the file is ready.
+            Task.Run(() =>
+            {
+                try
+                {
+                    SavePixelsAsPng(pixels, width, height, tempPath);
+                    utility.ResizeThumbnail(tempPath, destBase);
+                    try { File.Delete(tempPath); } catch { }
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.Error(ex, "Capture save failed");
+                    return;
+                }
+
+                Plugin.Framework.RunOnFrameworkThread(() => cb?.Invoke(finalPath));
+            });
         }
         catch (Exception ex) { Plugin.Log.Error(ex, "Capture failed"); }
     }
+
+    private static void SavePixelsAsPng(byte[] pixels, int width, int height, string path)
+    {
+        using var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        var data = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = data.Stride;
+            for (int y = 0; y < height; y++)
+                Marshal.Copy(pixels, y * width * 4, IntPtr.Add(data.Scan0, y * stride), width * 4);
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
+
+        bmp.Save(path, ImageFormat.Png);
+    }
+
+    /// <summary>
+    /// Captures a region of the game's DX11 back buffer into a BGRA byte array
+    /// (System.Drawing Format32bppArgb order). Mirrors Aetherphone's
+    /// PhotoCaptureService so snapshots work on Windows and Linux alike.
+    /// </summary>
+    private static unsafe bool TryCaptureRegion(
+        int left, int top, int width, int height,
+        out byte[] pixels, out int outWidth, out int outHeight)
+    {
+        pixels = Array.Empty<byte>();
+        outWidth = 0;
+        outHeight = 0;
+
+        var device = KernelDevice.Instance();
+        if (device == null || device->SwapChain == null)
+            return false;
+
+        var swapChainPtr = (nint)device->SwapChain->DXGISwapChain;
+        if (swapChainPtr == 0)
+            return false;
+
+        using var swapChain = new IDXGISwapChain(swapChainPtr);
+        swapChain.AddRef();
+        using var backBuffer = swapChain.GetBuffer<ID3D11Texture2D>(0);
+        var sourceDesc = backBuffer.Description;
+        if (!IsSupported(sourceDesc.Format))
+            return false;
+
+        int right = Math.Clamp(left + width, 0, (int)sourceDesc.Width);
+        int bottom = Math.Clamp(top + height, 0, (int)sourceDesc.Height);
+        left = Math.Clamp(left, 0, (int)sourceDesc.Width);
+        top = Math.Clamp(top, 0, (int)sourceDesc.Height);
+        int regionWidth = right - left;
+        int regionHeight = bottom - top;
+        if (regionWidth <= 0 || regionHeight <= 0)
+            return false;
+
+        using var d3dDevice = backBuffer.Device;
+        using var context = d3dDevice.ImmediateContext;
+
+        var stagingDesc = new Texture2DDescription
+        {
+            Width = (uint)regionWidth,
+            Height = (uint)regionHeight,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = sourceDesc.Format,
+            SampleDescription = new SampleDescription(1, 0),
+            Usage = ResourceUsage.Staging,
+            BindFlags = BindFlags.None,
+            CPUAccessFlags = CpuAccessFlags.Read,
+            MiscFlags = ResourceOptionFlags.None,
+        };
+
+        using var staging = d3dDevice.CreateTexture2D(stagingDesc);
+        var sourceBox = new Box(left, top, 0, right, bottom, 1);
+        context.CopySubresourceRegion(staging, 0, 0, 0, 0, backBuffer, 0, sourceBox);
+
+        var mapped = context.Map(staging, 0, MapMode.Read, Vortice.Direct3D11.MapFlags.None);
+        try
+        {
+            pixels = ReadPixels(mapped, regionWidth, regionHeight, IsRgba(sourceDesc.Format));
+        }
+        finally
+        {
+            context.Unmap(staging, 0);
+        }
+
+        outWidth = regionWidth;
+        outHeight = regionHeight;
+        return true;
+    }
+
+    private static byte[] ReadPixels(MappedSubresource mapped, int width, int height, bool sourceIsRgba)
+    {
+        var result = new byte[width * height * 4];
+        var rowBuffer = new byte[width * 4];
+        for (int row = 0; row < height; row++)
+        {
+            Marshal.Copy(IntPtr.Add(mapped.DataPointer, row * (int)mapped.RowPitch), rowBuffer, 0, rowBuffer.Length);
+            int destinationOffset = row * width * 4;
+            for (int column = 0; column < width; column++)
+            {
+                int index = column * 4;
+                if (sourceIsRgba)
+                {
+                    // source R,G,B,A -> target B,G,R,A
+                    result[destinationOffset + index + 0] = rowBuffer[index + 2];
+                    result[destinationOffset + index + 1] = rowBuffer[index + 1];
+                    result[destinationOffset + index + 2] = rowBuffer[index + 0];
+                }
+                else
+                {
+                    // source B,G,R,A -> target B,G,R,A (already in the right order)
+                    result[destinationOffset + index + 0] = rowBuffer[index + 0];
+                    result[destinationOffset + index + 1] = rowBuffer[index + 1];
+                    result[destinationOffset + index + 2] = rowBuffer[index + 2];
+                }
+
+                result[destinationOffset + index + 3] = 255;
+            }
+        }
+
+        return result;
+    }
+
+    private static bool IsSupported(Format format) =>
+        IsBgra(format) || format == Format.R8G8B8A8_UNorm || format == Format.R8G8B8A8_UNorm_SRgb;
+
+    private static bool IsBgra(Format format) =>
+        format == Format.B8G8R8A8_UNorm || format == Format.B8G8R8A8_UNorm_SRgb;
+
+    private static bool IsRgba(Format format) =>
+        format == Format.R8G8B8A8_UNorm || format == Format.R8G8B8A8_UNorm_SRgb;
 
     void Close()
     {

@@ -78,7 +78,7 @@ public class GlamourerService
             designTagsCache.Clear();
             tagRefreshQueue.Clear();
             tagRefreshInProgress = false;
-            return cachedDesignList;
+            return new();
         }
 
         // Designs were added or removed: drop cached dates so newly-created designs
