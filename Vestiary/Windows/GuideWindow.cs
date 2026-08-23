@@ -26,11 +26,14 @@ public class GuideWindow : Window, IDisposable
 
         ("Collections",
             "Collections let you group your designs into separate tabs.\n\n" +
-            "Create a collection — click the + tab and choose which Glamourer folders to include.\n" +
+            "Create a collection — click the + tab, give it a name, then add Glamourer folders and/or tags.\n" +
             "Edit a collection — right-click the tab.\n" +
             "Reorder collections — drag the tabs.\n" +
             "Delete a collection — right-click the tab and choose Delete.\n\n" +
-            "A collection with no folders will show uncategorized designs."),
+            "Folders — one Glamourer folder path per line.\n" +
+            "Tags — Glamourer tags separated by commas (e.g. summer, casual).\n\n" +
+            "A design is included when it matches any of the folders or any of the tags. Leave both empty to show uncategorized designs.\n\n" +
+            "If you change a design's tags inside Glamourer, click the refresh button next to the sort button to update the list."),
 
         ("Glamour Roulette", null),
 
