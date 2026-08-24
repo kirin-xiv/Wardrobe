@@ -139,6 +139,11 @@ public class CollectionEditorWindow : Window, IDisposable
             {
                 int matchCount = collectionService.CountDesignsByCriteria(paths, tags);
                 ImGui.TextColored(ThemeManager.Current.TextSuccess, Strings.ColDesignsMatch(matchCount));
+
+                // Reassure the user that leaving folders empty with tags does NOT
+                // fall back to the uncategorized bucket — this matches tags only.
+                if (paths.Count == 0 && tags.Count > 0)
+                    ImGui.TextColored(ThemeManager.Current.TextGreyHint, Strings.ColTagsOnlyHint);
             }
             else
             {

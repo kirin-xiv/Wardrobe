@@ -82,9 +82,13 @@ public class CollectionService
     }
 
     /// <summary>
-    /// Get all designs that match the collection's folder paths.
-    /// - If the collection has paths: returns designs matching any of those paths (prefix matching)
-    /// - If the collection has NO paths: returns designs not in any other collection ("Uncategorized")
+    /// Get all designs that match the collection's folder paths and/or tags.
+    /// - Folder paths are prefix-matched.
+    /// - Tags are matched case-insensitively; a design with any of the
+    ///   collection's tags is included.
+    /// - If the collection has both, the result is a union (folder OR tag).
+    /// - Only when both lists are empty does this fall back to uncategorized
+    ///   designs (root-level, no "/" in their path).
     /// </summary>
     public Dictionary<Guid, (string DisplayName, string FullPath, uint DisplayColor, bool ShownInQdb)> GetDesignsByCollection(Guid collectionId)
     {

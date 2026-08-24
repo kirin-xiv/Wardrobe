@@ -147,7 +147,7 @@ public static class Strings
     public const string ColFoldersLabel    = "Glamourer Folders:";
     public const string ColFoldersTooltip1 = "These are folder paths from Glamourer's design list.";
     public const string ColFoldersTooltip2 = "Only designs under these folders appear in this collection.";
-    public const string ColFoldersTooltip3 = "Leave both folders and tags empty to include uncategorized designs.";
+    public const string ColFoldersTooltip3 = "Leave folders empty to match tags only. Leave both folders and tags empty to include uncategorized designs.";
     public const string ColTagsLabel       = "Tags:";
     public const string ColTagsHint        = "e.g., summer, casual, SFW Random";
     public const string ColTagsTooltip1    = "Match designs by their Glamourer tags.";
@@ -162,6 +162,8 @@ public static class Strings
 
     public static string ColUncategorizedHint(int count) =>
         $"No folders or tags selected — {count} uncategorized design(s) would be included";
+
+    public const string ColTagsOnlyHint = "Matching by tags only, folders are empty.";
 
     // ── Design editor window ────────────────────────
     public const string DesignEditTitle       = "Edit Design Metadata";
