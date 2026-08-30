@@ -31,6 +31,9 @@ public partial class MainWindow : Window, IDisposable
     private readonly FavoriteService favoriteService;
     private CollectionEditorWindow? collectionEditorWindow;
     private Guid selectedCollectionId = Guid.Empty;
+    private readonly Dictionary<Guid, Dictionary<Guid, (string, string, uint, bool)>> _frameCollectionCache = new();
+    private Dictionary<Guid, (string, string, uint, bool)>? _frameFavoritesCache;
+    private bool _frameFavoritesCacheValid;
     private int dragTabIndex = -1;
     private Guid editingDesignId = Guid.Empty;
     private string editingDesignName = string.Empty;
@@ -108,13 +111,16 @@ public partial class MainWindow : Window, IDisposable
 
     /// <summary>
     /// Gets designs for a collection. Handles the special "Favorites" case via service.
+    /// Results are memoized per frame: the same collection is queried multiple times
+    /// during a single draw pass (chips row, gallery, minimized toolbar), and the
+    /// underlying data cannot change mid-frame.
     /// </summary>
     private Dictionary<Guid, (string, string, uint, bool)> GetDesignsForCollection(Guid collectionId)
     {
         var fav = collectionService.GetCollections().FirstOrDefault(c => c.Id == collectionId);
         if (fav != null && fav.Name == "Favorites")
         {
-            var favDesigns = favoriteService.GetFavoritesFromAllCollections(collectionService.GetDesignsByCollection);
+            var favDesigns = GetFavoritesDesigns();
             // Auto-clean: if no designs left, clear stale favorites
             if (favDesigns.Count == 0 && plugin.Configuration.FavoriteDesignIds.Count > 0)
             {
@@ -125,7 +131,28 @@ public partial class MainWindow : Window, IDisposable
             }
             return favDesigns;
         }
-        return collectionService.GetDesignsByCollection(collectionId);
+
+        if (_frameCollectionCache.TryGetValue(collectionId, out var cached))
+            return cached;
+
+        var designs = collectionService.GetDesignsByCollection(collectionId);
+        _frameCollectionCache[collectionId] = designs;
+        return designs;
+    }
+
+    /// <summary>
+    /// Favorited designs across all non-Favorites collections, memoized per frame.
+    /// </summary>
+    private Dictionary<Guid, (string, string, uint, bool)> GetFavoritesDesigns()
+    {
+        if (!_frameFavoritesCacheValid)
+        {
+            // Reuse the per-frame collection cache so already-computed collections
+            // aren't filtered again here.
+            _frameFavoritesCache = favoriteService.GetFavoritesFromAllCollections(GetDesignsForCollection);
+            _frameFavoritesCacheValid = true;
+        }
+        return _frameFavoritesCache!;
     }
 
     public void Dispose() { }
@@ -196,6 +223,12 @@ public partial class MainWindow : Window, IDisposable
     {
         if (plugin.IsCameraActive)
             return;
+
+        // Reset per-frame memoization caches. Draw() runs once per frame, and
+        // nothing can mutate the design list or collections mid-frame.
+        _frameCollectionCache.Clear();
+        _frameFavoritesCache = null;
+        _frameFavoritesCacheValid = false;
 
         // Dynamic size constraints for minimized mode
         SizeConstraints = new WindowSizeConstraints

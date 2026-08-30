@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Dalamud.Interface.Textures;
-using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Plugin.Services;
 
 namespace Vestiary.Services;
@@ -11,18 +10,21 @@ namespace Vestiary.Services;
 /// <summary>
 /// Caches textures loaded from file paths to avoid reloading every frame.
 /// Uses LRU eviction: when the cache exceeds <see cref="MaxCacheSize"/>, the least
-/// recently accessed texture is evicted to keep GPU memory bounded.
+/// recently accessed texture is evicted. The underlying GPU resources are owned by
+/// Dalamud's shared texture manager, so dropping the reference (removing it from the
+/// dictionary) is what releases them — no explicit Dispose is available or required.
 /// </summary>
 public class TextureCache : IDisposable
 {
     private const int MaxCacheSize = 100;
 
     private readonly ITextureProvider textureProvider;
+    private readonly object gate = new();
     private readonly Dictionary<string, Entry> cache = new();
 
-    private struct Entry
+    private sealed class Entry
     {
-        public ISharedImmediateTexture Texture;
+        public ISharedImmediateTexture? Texture;
         public long LastAccessTick;
     }
 
@@ -40,64 +42,76 @@ public class TextureCache : IDisposable
         if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
             return null;
 
-        if (cache.TryGetValue(filePath, out var entry))
+        lock (gate)
         {
-            entry.LastAccessTick = DateTime.UtcNow.Ticks;
-            cache[filePath] = entry;
-            return entry.Texture;
+            if (cache.TryGetValue(filePath, out var entry))
+            {
+                entry.LastAccessTick = DateTime.UtcNow.Ticks;
+                cache[filePath] = entry;
+                return entry.Texture;
+            }
         }
 
+        ISharedImmediateTexture? texture;
         try
         {
-            var textureFile = new FileInfo(filePath);
-            var texture = textureProvider.GetFromFile(textureFile);
-
-            if (texture != null)
-            {
-                EvictIfNeeded();
-                cache[filePath] = new Entry
-                {
-                    Texture = texture,
-                    LastAccessTick = DateTime.UtcNow.Ticks
-                };
-                return texture;
-            }
+            texture = textureProvider.GetFromFile(new FileInfo(filePath));
         }
         catch (Exception ex)
         {
             Plugin.Log.Error(ex, $"Failed to load texture from {filePath}");
+            return null;
         }
 
-        return null;
+        if (texture == null)
+            return null;
+
+        lock (gate)
+        {
+            EvictIfNeededLocked();
+            cache[filePath] = new Entry
+            {
+                Texture = texture,
+                LastAccessTick = DateTime.UtcNow.Ticks
+            };
+        }
+
+        return texture;
     }
 
     /// <summary>
-    /// Remove a texture from cache (e.g., when file is deleted).
+    /// Remove a texture from cache (e.g., when its file is deleted).
     /// </summary>
     public void InvalidateTexture(string filePath)
     {
-        cache.Remove(filePath);
+        lock (gate)
+        {
+            cache.Remove(filePath);
+        }
     }
 
     /// <summary>
-    /// Clear all cached textures.
+    /// Clear all cached texture references.
     /// </summary>
     public void ClearAll()
     {
-        cache.Clear();
+        lock (gate)
+        {
+            cache.Clear();
+        }
     }
 
     public void Dispose()
     {
-        cache.Clear();
+        ClearAll();
     }
 
-    private void EvictIfNeeded()
+    private void EvictIfNeededLocked()
     {
         if (cache.Count < MaxCacheSize)
             return;
 
-        // Remove the entry with the oldest access timestamp
+        // Remove the entry with the oldest access timestamp.
         var oldest = cache.MinBy(kv => kv.Value.LastAccessTick);
         cache.Remove(oldest.Key);
     }

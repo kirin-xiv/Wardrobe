@@ -245,7 +245,10 @@ public class UtilityService
                 };
 
                 if (dialog.ShowDialog() == DialogResult.OK)
-                    onFileSelected(dialog.FileName);
+                {
+                    var file = dialog.FileName;
+                    Plugin.Framework.RunOnFrameworkThread(() => onFileSelected(file));
+                }
             }
             catch (Exception ex)
             {
@@ -320,7 +323,7 @@ public class UtilityService
                         var finalPath = ResizeThumbnail(tempPath, destBase);
                         try { File.Delete(tempPath); } catch { }
                         log.Information($"Clipboard image saved & resized: {finalPath}");
-                        onImageSaved(finalPath);
+                        Plugin.Framework.RunOnFrameworkThread(() => onImageSaved(finalPath));
                     }
                 }
                 else if (sourceFilePath != null)
@@ -329,7 +332,7 @@ public class UtilityService
                     var destBase = Path.Combine(ThumbnailsDirectory, $"clipboard_{timestamp}");
                     var finalPath = ResizeThumbnail(sourceFilePath, destBase);
                     log.Information($"Clipboard file resized: {finalPath}");
-                    onImageSaved(finalPath);
+                    Plugin.Framework.RunOnFrameworkThread(() => onImageSaved(finalPath));
                 }
             }
             catch (Exception ex)

@@ -220,7 +220,7 @@ public partial class MainWindow
         var hiddenFiltered = FilterBySearch(hiddenDesigns);
 
         int designsCount = hiddenDesignService.ShowHidden ? hiddenFiltered.Count : visibleFiltered.Count;
-        int favoritesCount = favoriteService.GetFavoritesFromAllCollections(collectionService.GetDesignsByCollection).Count;
+        int favoritesCount = GetFavoritesDesigns().Count;
 
         var hiddenLabelSize = ImGui.CalcTextSize(Strings.ShowHiddenLabel);
         float checkboxW = 18f;

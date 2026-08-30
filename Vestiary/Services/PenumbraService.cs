@@ -192,7 +192,18 @@ public class PenumbraService
         foreach (var (_, itemId) in equipment)
         {
             if (itemId == 0 || itemId > MaxValidItemId) continue;
-            var name = itemSheet.GetRow(itemId).Name.ToString();
+
+            string name;
+            try
+            {
+                name = itemSheet.GetRow(itemId).Name.ToString();
+            }
+            catch
+            {
+                // Invalid/out-of-range ItemId in a design: skip rather than crash.
+                continue;
+            }
+
             if (string.IsNullOrEmpty(name)) continue;
             if (name.StartsWith("The Emperor's New", StringComparison.OrdinalIgnoreCase)) continue;
             names.Add(name);

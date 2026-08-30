@@ -10,10 +10,30 @@ public class DesignMetadataService
     private readonly Configuration configuration;
     private readonly GlamourerService glamourerService;
 
+    // Metadata is looked up for every card, every frame. A linear scan of
+    // configuration.DesignMetadata per card becomes O(cards x metadata); index it
+    // once and rebuild lazily when the list is replaced (e.g. Wardrobe migration)
+    // or mutated through this service.
+    private List<DesignMetadata>? _indexedList;
+    private Dictionary<Guid, DesignMetadata>? _index;
+
     public DesignMetadataService(Configuration configuration, GlamourerService glamourerService)
     {
         this.configuration = configuration;
         this.glamourerService = glamourerService;
+    }
+
+    private Dictionary<Guid, DesignMetadata> GetIndex()
+    {
+        var list = configuration.DesignMetadata ?? new();
+        if (_index == null || !ReferenceEquals(_indexedList, list))
+        {
+            _index = new Dictionary<Guid, DesignMetadata>();
+            foreach (var m in list)
+                _index[m.DesignId] = m;
+            _indexedList = list;
+        }
+        return _index;
     }
 
     /// <summary>
@@ -21,7 +41,7 @@ public class DesignMetadataService
     /// </summary>
     public DesignMetadata? GetMetadata(Guid designId)
     {
-        return configuration.DesignMetadata.FirstOrDefault(dm => dm.DesignId == designId);
+        return GetIndex().TryGetValue(designId, out var m) ? m : null;
     }
 
     /// <summary>
@@ -39,6 +59,7 @@ public class DesignMetadataService
         {
             var metadata = new DesignMetadata(designId, nickname, customImagePath);
             configuration.DesignMetadata.Add(metadata);
+            _index = null; // stale after Add; rebuild lazily
         }
         configuration.Save();
     }
@@ -52,6 +73,7 @@ public class DesignMetadataService
         if (metadata != null)
         {
             configuration.DesignMetadata.Remove(metadata);
+            _index = null; // stale after Remove; rebuild lazily
             configuration.Save();
         }
     }

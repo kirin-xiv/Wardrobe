@@ -11,6 +11,54 @@ namespace Vestiary.Windows;
 
 public partial class MainWindow
 {
+    // The Emote sheet is static game data: build it once and reuse it. It was
+    // previously rebuilt (and sorted with an O(n^2) dedup) every single frame
+    // while the Emotes view was open.
+    private static List<string>? _cachedEmoteNames;
+    private static Dictionary<string, string>? _cachedEmoteCommands;
+    private static bool _emoteSheetCacheFailed;
+
+    private static (List<string> Names, Dictionary<string, string> Commands) GetEmoteSheetData()
+    {
+        if (_cachedEmoteNames != null)
+            return (_cachedEmoteNames, _cachedEmoteCommands!);
+
+        if (_emoteSheetCacheFailed)
+            return (new List<string>(), new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+
+        try
+        {
+            var emoteSheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
+            var names = new List<string>();
+            var commands = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var seen = new HashSet<string>(); // case-sensitive, matching the old List.Contains dedup
+
+            foreach (var emote in emoteSheet)
+            {
+                // Skip facial expressions (EmoteCategory row 3 = Expressions).
+                if (emote.EmoteCategory.ValueNullable?.RowId == 3) continue;
+
+                var name = emote.Name.ToString();
+                if (string.IsNullOrEmpty(name)) continue;
+                if (seen.Add(name)) names.Add(name);
+
+                var cmd = emote.TextCommand.ValueNullable?.Command.ToString() ?? "";
+                if (!string.IsNullOrEmpty(cmd)) commands[name] = cmd;
+            }
+
+            names.Sort(StringComparer.OrdinalIgnoreCase);
+            _cachedEmoteNames = names;
+            _cachedEmoteCommands = commands;
+            return (names, commands);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.Error(ex, "[Emotes] Failed to build Emote sheet cache");
+            _emoteSheetCacheFailed = true;
+            return (new List<string>(), new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+        }
+    }
+
     private void DrawEmoteCollectionRow(List<Models.EmoteCollection> collections)
     {
         if (collections.Count == 0)
@@ -231,21 +279,7 @@ public partial class MainWindow
         var cards = GetFilteredEmoteCards();
 
         // ── Gallery ──
-        var emoteSheet = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Emote>();
-        var sortedEmotes = new List<string>();
-        var emoteCommands = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var emote in emoteSheet)
-        {
-            // Skip facial expressions (EmoteCategory row 3 = Expressions).
-            if (emote.EmoteCategory.ValueNullable?.RowId == 3) continue;
-
-            var name = emote.Name.ToString();
-            if (string.IsNullOrEmpty(name)) continue;
-            if (!sortedEmotes.Contains(name)) sortedEmotes.Add(name);
-            var cmd = emote.TextCommand.ValueNullable?.Command.ToString() ?? "";
-            if (!string.IsNullOrEmpty(cmd)) emoteCommands[name] = cmd;
-        }
-        sortedEmotes.Sort(StringComparer.OrdinalIgnoreCase);
+        var (sortedEmotes, emoteCommands) = GetEmoteSheetData();
 
         if (cards.Count == 0)
         {

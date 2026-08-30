@@ -21,7 +21,9 @@ public class GlamourerService
 
     private Dictionary<Guid, (string DisplayName, string FullPath, uint DisplayColor, bool ShownInQdb)>? cachedDesignList;
     private DateTime cacheExpiry = DateTime.MinValue;
+    private DateTime lastListErrorLogUtc = DateTime.MinValue;
     private static readonly TimeSpan DesignListCacheTtl = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan ListErrorLogThrottle = TimeSpan.FromSeconds(5);
 
     private readonly Dictionary<Guid, DateTime> designDateCache = new();
     private readonly Dictionary<Guid, List<string>> designTagsCache = new();
@@ -68,7 +70,31 @@ public class GlamourerService
             return cachedDesignList;
 
         var previous = cachedDesignList;
-        cachedDesignList = designListSubscriber.InvokeFunc();
+        try
+        {
+            cachedDesignList = designListSubscriber.InvokeFunc();
+        }
+        catch (Exception ex)
+        {
+            // Glamourer unavailable or IPC hiccup: drop all cached data and return an
+            // empty list so every caller degrades gracefully instead of crashing.
+            cachedDesignList = null;
+            cacheExpiry = DateTime.MinValue;
+            designDateCache.Clear();
+            designTagsCache.Clear();
+            tagRefreshQueue.Clear();
+            tagRefreshInProgress = false;
+            lastTagRefreshProcess = DateTime.MinValue;
+
+            // Throttle the log so a missing Glamourer doesn't spam every frame.
+            var now = DateTime.UtcNow;
+            if (now - lastListErrorLogUtc >= ListErrorLogThrottle)
+            {
+                lastListErrorLogUtc = now;
+                log.Error(ex, "[Glamourer] GetDesignList failed");
+            }
+            return new();
+        }
         cacheExpiry = DateTime.UtcNow + DesignListCacheTtl;
 
         if (cachedDesignList == null)
@@ -184,7 +210,15 @@ public class GlamourerService
 
     public string? GetDesignBase64(Guid designId)
     {
-        return designBase64Subscriber.InvokeFunc(designId);
+        try
+        {
+            return designBase64Subscriber.InvokeFunc(designId);
+        }
+        catch (Exception ex)
+        {
+            log.Error(ex, $"[Glamourer] GetDesignBase64 failed for {designId}");
+            return null;
+        }
     }
 
     /// <summary>

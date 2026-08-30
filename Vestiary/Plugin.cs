@@ -216,8 +216,15 @@ public sealed class Plugin : IDalamudPlugin
         ImGui.PushStyleColor(ImGuiCol.TitleBg, ThemeManager.Current.WindowBg);
         ImGui.PushStyleColor(ImGuiCol.TitleBgActive, ThemeManager.Current.RailBg);
         ImGui.PushStyleColor(ImGuiCol.TitleBgCollapsed, ThemeManager.Current.WindowBg);
-        WindowSystem.Draw();
-        ImGui.PopStyleColor(3);
+        try
+        {
+            WindowSystem.Draw();
+        }
+        finally
+        {
+            // Always balance the style stack, even if a window's Draw() throws
+            ImGui.PopStyleColor(3);
+        }
     }
 
     private void ProcessPendingEmote()
