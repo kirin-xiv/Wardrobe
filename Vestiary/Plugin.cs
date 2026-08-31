@@ -86,17 +86,6 @@ public sealed class Plugin : IDalamudPlugin
         RouletteService = new RouletteService(Configuration, GlamourerService, ModStateService, CollectionService, HiddenDesignService, Framework);
         TextureCache = new TextureCache(TextureProvider);
 
-        // One-time cleanup of orphaned thumbnails from deleted designs
-        try
-        {
-            var activeDesigns = GlamourerService.GetDesignList();
-            UtilityService.CleanupOrphanedThumbnails(activeDesigns.Keys, Configuration.DesignMetadata);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Orphaned thumbnail cleanup skipped (Glamourer may not be installed yet)");
-        }
-
         var goatImagePath = Path.Combine(pluginDir, "goat.png");
         var noPreviewImagePath = Path.Combine(pluginDir, "..", "..", "Data", "no-preview.jpg");
         var cameraIconPath = Path.Combine(pluginDir, "camera_icon.png");

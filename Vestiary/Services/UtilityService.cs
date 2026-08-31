@@ -77,7 +77,102 @@ public class UtilityService
         Directory.CreateDirectory(ThumbnailsDirectory);
         log.Information($"Thumbnails directory: {ThumbnailsDirectory}");
 
+        // Recover a wiped design→thumbnail mapping from a previous snapshot before
+        // we create a fresh one, then snapshot the config so the mapping can never
+        // be lost by a future bug. Order matters: restore first, then backup.
+        RestoreDesignMetadataIfWiped(configuration);
+        BackupConfig();
+
         MigrateFromWardrobe(configuration);
+    }
+
+    // ── Config Backup / Restore ──────────────────────
+
+    private const int MaxConfigBackups = 5;
+    private const string ConfigFileName = "Vestiary.json";
+
+    private string ConfigPath => Path.Combine(Plugin.PluginConfigDirectory, ConfigFileName);
+
+    /// <summary>
+    /// Snapshots Vestiary.json to a rolling set of .bak files (bak1 = newest, up to
+    /// <see cref="MaxConfigBackups"/>). This protects the design→thumbnail mapping
+    /// (<c>DesignMetadata</c>) — and the rest of the config — from any future bug.
+    /// </summary>
+    public void BackupConfig()
+    {
+        try
+        {
+            if (!File.Exists(ConfigPath))
+                return;
+
+            // Shift older snapshots down: bak4→bak5, bak3→bak4, ..., bak1→bak2.
+            for (int i = MaxConfigBackups; i >= 1; i--)
+            {
+                var src = i == 1 ? ConfigPath : ConfigPath + $".bak{i - 1}";
+                var dst = ConfigPath + $".bak{i}";
+                if (File.Exists(src))
+                {
+                    try { File.Copy(src, dst, overwrite: true); } catch { }
+                }
+            }
+
+            log.Information("[Backup] Configuration snapshot saved.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "[Backup] Failed to back up configuration");
+        }
+    }
+
+    /// <summary>
+    /// If the current config has no DesignMetadata (e.g. a previous bug wiped the
+    /// design→thumbnail mapping) but thumbnail files still exist on disk and a
+    /// backup has metadata, restore the metadata from the newest such backup.
+    /// Restores only DesignMetadata — collections, favorites, etc. are left alone.
+    /// </summary>
+    public void RestoreDesignMetadataIfWiped(Configuration configuration)
+    {
+        try
+        {
+            if (configuration.DesignMetadata.Count > 0)
+                return;
+
+            // If there are no thumbnails on disk either, the user cleared everything
+            // deliberately; don't resurrect stale mappings.
+            if (!Directory.Exists(ThumbnailsDirectory) || Directory.GetFiles(ThumbnailsDirectory).Length == 0)
+                return;
+
+            for (int i = 1; i <= MaxConfigBackups; i++)
+            {
+                var bak = ConfigPath + $".bak{i}";
+                if (!File.Exists(bak))
+                    continue;
+
+                Configuration? backup;
+                try
+                {
+                    backup = Newtonsoft.Json.JsonConvert.DeserializeObject<Configuration>(File.ReadAllText(bak));
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (backup?.DesignMetadata?.Count > 0)
+                {
+                    configuration.DesignMetadata = backup.DesignMetadata;
+                    configuration.Save();
+                    log.Warning($"[Backup] DesignMetadata was empty — restored {backup.DesignMetadata.Count} entries from {Path.GetFileName(bak)}.");
+                    return;
+                }
+            }
+
+            log.Warning("[Backup] DesignMetadata is empty and no backup with metadata was found.");
+        }
+        catch (Exception ex)
+        {
+            log.Warning(ex, "[Backup] Failed to restore DesignMetadata");
+        }
     }
 
     // ── Thumbnail Resize ───────────────────────────
@@ -152,60 +247,6 @@ public class UtilityService
         }
 
         return destPath;
-    }
-
-    // ── Orphan Cleanup ─────────────────────────────
-
-    /// <summary>
-    /// Delete thumbnail files and metadata entries for designs that no longer
-    /// exist in Glamourer. Call once after plugin initialization.
-    /// </summary>
-    public void CleanupOrphanedThumbnails(ICollection<Guid> activeDesignIds, List<Models.DesignMetadata> metadata)
-    {
-        try
-        {
-            var activeSet = new HashSet<Guid>(activeDesignIds);
-            var orphanedIds = new HashSet<Guid>();
-            int filesDeleted = 0;
-
-            if (!Directory.Exists(ThumbnailsDirectory))
-                return;
-
-            foreach (var file in Directory.GetFiles(ThumbnailsDirectory))
-            {
-                var fileName = Path.GetFileName(file);
-                var idEnd = fileName.IndexOf('_');
-                if (idEnd < 0)
-                    idEnd = fileName.LastIndexOf('.');
-                if (idEnd < 0)
-                    continue;
-
-                if (Guid.TryParse(fileName[..idEnd], out var designId) && !activeSet.Contains(designId))
-                {
-                    try
-                    {
-                        File.Delete(file);
-                        orphanedIds.Add(designId);
-                        filesDeleted++;
-                        log.Information($"Cleaned up orphaned thumbnail: {fileName}");
-                    }
-                    catch (Exception ex)
-                    {
-                        log.Warning(ex, $"Failed to delete orphaned thumbnail: {fileName}");
-                    }
-                }
-            }
-
-            // Also prune orphaned metadata entries
-            int metadataRemoved = metadata.RemoveAll(m => orphanedIds.Contains(m.DesignId) || !activeSet.Contains(m.DesignId));
-
-            if (filesDeleted > 0 || metadataRemoved > 0)
-                log.Information($"Orphan cleanup: {filesDeleted} thumbnail(s), {metadataRemoved} metadata entry(s) removed");
-        }
-        catch (Exception ex)
-        {
-            log.Error(ex, "Failed during orphaned thumbnail cleanup");
-        }
     }
 
     // ── Scroll Lock ─────────────────────────────────
